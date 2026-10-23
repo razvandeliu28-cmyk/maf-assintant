@@ -2,17 +2,17 @@
 const express = require("express");
 
 const app = express();
-app.use(express.json({ limit: "20kb" }));
-app.use(express.text({ type: "text/plain", limit: "20kb" }));
-
 const PORT = process.env.PORT || 3000;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+// Citim corpul brut ca text, fără middleware JSON.
+app.use(express.text({
+  type: "*/*",
+  limit: "20kb"
+}));
+
 app.get("/", (req, res) => {
-  res.json({
-    name: "MAF ASSISTANT",
-    status: "online"
-  });
+  res.json({ name: "MAF ASSISTANT", status: "online" });
 });
 
 app.get("/health", (req, res) => {
@@ -21,48 +21,49 @@ app.get("/health", (req, res) => {
 
 app.post("/reply", async (req, res) => {
   try {
-    let body = req.body;
+    const raw = req.body;
 
-    // Acceptă și JSON trimis ca text brut.
-    if (typeof body === "string") {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        return res.status(400).json({
-          error: "Body-ul nu este JSON valid.",
-          example: {
-            message: "Salut, MAF ASSISTANT!"
-          }
-        });
-      }
+    console.log("CONTENT-TYPE:", req.headers["content-type"]);
+    console.log("RAW BODY:", JSON.stringify(raw));
+
+    if (typeof raw !== "string" || !raw.trim()) {
+      return res.status(400).json({
+        error: "Serverul nu a primit un Body.",
+        contentType: req.headers["content-type"] || "missing",
+        receivedBody: raw ?? null
+      });
     }
 
-    console.log("Request body type:", typeof body);
-    console.log(
-      "Request body keys:",
-      body && typeof body === "object"
-        ? Object.keys(body)
-        : []
-    );
+    let body;
 
-    const message =
-      typeof body?.message === "string"
-        ? body.message.trim()
-        : "";
-
-    if (!message || message.length > 2000) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
       return res.status(400).json({
-        error: "Mesaj lipsă sau invalid.",
-        receivedType: typeof body,
-        expected: {
-          message: "text, maximum 2000 characters"
-        }
+        error: "Body-ul nu este JSON valid.",
+        receivedBody: raw.slice(0, 200)
+      });
+    }
+
+    const message = body?.message;
+
+    if (
+      typeof message !== "string" ||
+      !message.trim() ||
+      message.length > 2000
+    ) {
+      return res.status(400).json({
+        error: "Câmpul message lipsește sau este invalid.",
+        receivedKeys:
+          body && typeof body === "object"
+            ? Object.keys(body)
+            : []
       });
     }
 
     if (!GROQ_API_KEY) {
       return res.status(503).json({
-        error: "Lipsește GROQ_API_KEY din Render Environment."
+        error: "GROQ_API_KEY lipsește din Render Environment."
       });
     }
 
@@ -80,17 +81,11 @@ app.post("/reply", async (req, res) => {
             {
               role: "system",
               content:
-                "You are MAF ASSISTANT, a friendly AI for a TikTok editing community. " +
-                "Reply in the same language as the user's message. " +
-                "Be concise, natural, funny when appropriate, and respectful. " +
-                "Never claim to be human or invent facts about the creator."
+                "You are MAF ASSISTANT, a friendly TikTok editing community AI. " +
+                "Reply in the same language as the user. Be concise, natural, and respectful."
             },
-            {
-              role: "user",
-              content: message
-            }
+            { role: "user", content: message.trim() }
           ],
-          temperature: 0.7,
           max_tokens: 300
         })
       }
@@ -99,40 +94,25 @@ app.post("/reply", async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(
-        "Groq API error:",
-        JSON.stringify(data)
-      );
-
+      console.error("Groq error:", JSON.stringify(data));
       return res.status(502).json({
-        error: "Furnizorul AI a respins cererea.",
+        error: "Groq a respins cererea.",
         providerStatus: response.status,
-        details: data.error?.message || "Unknown provider error"
-      });
-    }
-
-    const reply = data.choices?.[0]?.message?.content;
-
-    if (!reply) {
-      return res.status(502).json({
-        error: "Furnizorul AI nu a returnat un răspuns."
+        details: data.error?.message || "Unknown error"
       });
     }
 
     return res.json({
       assistant: "MAF ASSISTANT",
-      reply
+      reply: data.choices?.[0]?.message?.content || "Nu am un răspuns momentan."
     });
   } catch (error) {
-    console.error("Request failed:", error.message);
-
-    return res.status(500).json({
-      error: "Eroare internă la generarea răspunsului."
-    });
+    console.error("Server error:", error.message);
+    return res.status(500).json({ error: "Eroare internă." });
   }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`MAF ASSISTANT listening on port ${PORT}`);
 });
-    
+  

@@ -1,22 +1,16 @@
 
 const express = require("express");
-const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 app.use(express.json({ limit: "20kb" }));
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.GEMINI_API_KEY;
-
-const ai = API_KEY
-  ? new GoogleGenAI({ apiKey: API_KEY })
-  : null;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 app.get("/", (req, res) => {
   res.json({
     name: "MAF ASSISTANT",
-    status: "online",
-    message: "MAF AI is ready!"
+    status: "online"
   });
 });
 
@@ -26,40 +20,72 @@ app.get("/health", (req, res) => {
 
 app.post("/reply", async (req, res) => {
   try {
-    if (!ai) {
+    if (!GROQ_API_KEY) {
       return res.status(503).json({
-        error: "Gemini API key is not configured."
+        error: "GROQ_API_KEY is not configured."
       });
     }
 
     const message = req.body?.message;
 
-    if (typeof message !== "string" ||
-        !message.trim() ||
-        message.length > 2000) {
+    if (
+      typeof message !== "string" ||
+      !message.trim() ||
+      message.length > 2000
+    ) {
       return res.status(400).json({
         error: "Send a valid message (max 2000 characters)."
       });
     }
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: message.trim(),
-      config: {
-        systemInstruction:
-          "You are MAF ASSISTANT, a friendly AI for a TikTok editing community. " +
-          "Reply in the same language as the user's message. " +
-          "Be concise, natural, funny when appropriate, and respectful. " +
-          "Never claim to be human or invent facts about the creator."
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are MAF ASSISTANT, a friendly AI for a TikTok editing community. " +
+                "Reply in the same language as the user's message. " +
+                "Be concise, natural, funny when appropriate, and respectful. " +
+                "Never claim to be human or invent facts about the creator."
+            },
+            {
+              role: "user",
+              content: message.trim()
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 300
+        })
       }
-    });
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Groq API error:", JSON.stringify(data));
+      return res.status(response.status).json({
+        error: "AI provider request failed.",
+        status: response.status
+      });
+    }
 
     res.json({
       assistant: "MAF ASSISTANT",
-      reply: response.text || "Nu am un răspuns momentan 😅"
+      reply:
+        data.choices?.[0]?.message?.content ||
+        "Nu am un răspuns momentan 😅"
     });
   } catch (error) {
-    console.error("Gemini request failed:", error.message);
+    console.error("Request failed:", error.message);
 
     res.status(500).json({
       error: "Could not generate a reply."
